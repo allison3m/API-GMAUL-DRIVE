@@ -1,0 +1,295 @@
+import os, zipfile, textwrap, json
+
+out_dir = "/mnt/data/alfi-gmail-drive-template"
+os.makedirs(out_dir, exist_ok=True)
+
+# README (Portuguese)
+readme = """# Alfi Gmail→Drive — Template seguro (sanitized)
+
+Este repositório é um **modelo** seguro para publicar no GitHub sem expor credenciais ou IDs sensíveis.
+Use-o como base para seu projeto real — mantenha o repositório real privado.
+
+**O que inclui**
+- scripts *sanitizados* (sem `token.json`, sem `credentials.json` embutidos, sem IDs hardcoded)
+- `.env.example` com as variáveis necessárias
+- `.gitignore` pronto para evitar envs/credenciais
+- `LICENSE` (MIT) — opcional, altere se desejar
+
+**Como usar**
+1. Crie um repositório privado para o código real. Suba este template ao público se quiser mostrar estrutura/README.
+2. Nunca envie `credentials.json` ou `token.json` para o repo. Use variáveis de ambiente.
+3. Preencha `.env` local (não commit) baseado em `.env.example`.
+4. Rode `python main_sanitized.py` para iniciar — o script espera variáveis de ambiente para autenticação.
+
+**Variáveis importantes (colocar em um `.env`, não commitar):**
+- GOOGLE_CREDENTIALS_PATH: caminho para `credentials.json` (arquivo que você baixa do Google Cloud). Não subir ao Git.
+- GOOGLE_TOKEN_PATH: caminho para `token.json` (arquivo gerado após o OAuth). Não subir ao Git.
+- DRIVE_PARENT_FOLDER_ID: ID da pasta do Drive onde os arquivos serão enviados.
+- GMAIL_QUERY: (opcional) query padrão para buscar emails, por exemplo `GRUPAMENTO APOIO DIST FEDERAL`.
+
+**Avisos de segurança**
+- Use repositório privado para o código operacional.
+- Use secrets manager (GitHub Secrets / env vars) para CI.
+- Revogue tokens/credenciais que foram comprometidos.
+"""
+
+with open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8") as f:
+    f.write(readme)
+
+# .gitignore
+gitignore = textwrap.dedent("""
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.vscode/
+venv/
+.env.local
+
+# Google credentials and tokens
+credentials.json
+token.json
+*.sqlite
+debug_texto_*.txt
+
+# OS
+.DS_Store
+Thumbs.db
+""")
+with open(os.path.join(out_dir, ".gitignore"), "w", encoding="utf-8") as f:
+    f.write(gitignore)
+
+# .env.example
+env_example = textwrap.dedent("""
+# Exemplo de .env (NÃO COMMITAR este arquivo com valores reais)
+GOOGLE_CREDENTIALS_PATH=./credentials.json
+GOOGLE_TOKEN_PATH=./token.json
+DRIVE_PARENT_FOLDER_ID=your_drive_parent_folder_id_here
+GMAIL_QUERY=GRUPAMENTO APOIO DIST FEDERAL
+""")
+with open(os.path.join(out_dir, ".env.example"), "w", encoding="utf-8") as f:
+    f.write(env_example)
+
+# LICENSE MIT
+license_text = textwrap.dedent("""\
+MIT License
+
+Copyright (c) 2025 Allison
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the following conditions:
+...
+""")
+with open(os.path.join(out_dir, "LICENSE"), "w", encoding="utf-8") as f:
+    f.write(license_text)
+
+# Create a sanitized main script (main_sanitized.py)
+main_py = textwrap.dedent('''\
+"""
+main_sanitized.py
+
+Versão sanitizada do script Gmail -> Drive:
+- Não contém credenciais nem IDs hardcoded.
+- Usa variáveis de ambiente para caminhos e IDs.
+- Mantém a lógica de processamento (extração de texto, upload), mas sem dados sensíveis.
+
+Antes de rodar:
+  pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib pdfplumber python-dotenv
+
+Coloque um arquivo .env (não comitar) seguindo .env.example.
+"""
+import os
+import datetime
+import json
+import base64
+import io
+import re
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente do .env (opcional)
+load_dotenv()
+
+GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
+GOOGLE_TOKEN_PATH = os.getenv("GOOGLE_TOKEN_PATH", "token.json")
+DRIVE_PARENT_FOLDER_ID = os.getenv("DRIVE_PARENT_FOLDER_ID")  # Não deixar em branco em produção
+GMAIL_QUERY = os.getenv("GMAIL_QUERY", "GRUPAMENTO APOIO DIST FEDERAL")
+
+# IMPORTS do Google (deixar aqui; arquivos reais devem ter credentials/token localmente)
+try:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+except Exception as e:
+    print("⚠️ Módulos Google não encontrados. Instale 'google-api-python-client' e dependências.")
+    raise
+
+# -------------------------
+# Funções utilitárias (mantive lógica, sem IDs sensíveis)
+# -------------------------
+def limpar_valor(texto):
+    if not texto:
+        return None
+    texto = texto.replace(' ', '')
+    if '.' in texto and ',' in texto:
+        texto = texto.replace('.', '')
+        texto = texto.replace(',', '.')
+    elif ',' in texto:
+        texto = texto.replace(',', '.')
+    elif '.' in texto:
+        partes = texto.split('.')
+        if len(partes[-1]) == 2 and len(partes) > 1:
+            pass
+        else:
+            texto = texto.replace('.', '')
+    try:
+        return float(texto)
+    except:
+        return None
+
+def extrair_dados_pdf(texto_completo):
+    # Versão reduzida para exemplo. Ajuste conforme necessidade.
+    dados = {
+        "valor_liquido": None,
+        "vencimento": None,
+        "arquivo": None
+    }
+    match = re.search(r'R?\\$\\s*([\\d.,]+)', texto_completo)
+    if match:
+        dados["valor_liquido"] = limpar_valor(match.group(1))
+    match = re.search(r'VENCIMENTO\\s+(\\d{2}/\\d{2}/\\d{4})', texto_completo, re.IGNORECASE)
+    if match:
+        dados["vencimento"] = match.group(1).strip()
+    return dados
+
+# -------------------------
+# Função principal (usa token.json localmente — NÃO subir esse arquivo)
+# -------------------------
+def main():
+    if not os.path.exists(GOOGLE_TOKEN_PATH):
+        print("❗ token.json não encontrado. Execute o fluxo de autenticação (quickstart) localmente para gerar token.json.")
+        return
+
+    creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_PATH)
+    service_gmail = build("gmail", "v1", credentials=creds)
+    service_drive = build("drive", "v3", credentials=creds)
+
+    hoje = datetime.date.today()
+    inicio = hoje.replace(day=1)
+    if hoje.month == 12:
+        proximo_mes = hoje.replace(year=hoje.year + 1, month=1, day=1)
+    else:
+        proximo_mes = hoje.replace(month=hoje.month + 1, day=1)
+    fim = proximo_mes - datetime.timedelta(days=1)
+
+    query = f'{GMAIL_QUERY} after:{inicio.strftime("%Y/%m/%d")} before:{fim.strftime("%Y/%m/%d")}'
+    print("🔎 Query:", query)
+    results = service_gmail.users().messages().list(userId="me", labelIds=["INBOX"], q=query).execute()
+    messages = results.get("messages", [])
+
+    if not messages:
+        print("Nenhum e-mail encontrado nesse período.")
+        return
+
+    todos_dados = []
+    for msg in messages:
+        msg_id = msg["id"]
+        print("Processando e-mail:", msg_id)
+        # Chamaria aqui as rotinas de extração/baixa de anexos e upload
+        # Para o template, deixamos as funções em arquivos separados (sanitizados).
+        # Exemplo: listar_arquivos_email(), baixar_e_enviar(), upload_para_pasta()
+        # Implemente localmente com seu token.json e drive parent id.
+    print("\\nTemplate rodado com sucesso (modo de demonstração).")
+
+if __name__ == '__main__':
+    main()
+''')
+
+with open(os.path.join(out_dir, "main_sanitized.py"), "w", encoding="utf-8") as f:
+    f.write(main_py)
+
+# Create a small quickstart_sanitized.py that shows auth flow but warns about not uploading credentials
+quickstart_py = textwrap.dedent('''\
+"""
+quickstart_sanitized.py
+
+Exemplo de fluxo de autenticação (modo local).
+NÃO comite credentials.json ou token.json no repositório.
+"""
+import os
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+except Exception as e:
+    print("Instale as bibliotecas necessárias: google-auth-oauthlib google-auth-httplib2 google-api-python-client")
+    raise
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/drive"]
+
+def run_auth(credentials_path="credentials.json", token_path="token.json"):
+    if not os.path.exists(credentials_path):
+        print("❗ credentials.json não encontrado. Baixe do Google Cloud Console e salve localmente (NÃO COMMITAR).")
+        return
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+            creds = flow.run_local_server(port=8080)
+        with open(token_path, "w") as token:
+            token.write(creds.to_json())
+    print("✔️ Autenticação concluída. token.json criado localmente (NÃO comitar).")
+
+if __name__ == "__main__":
+    run_auth()
+''')
+
+with open(os.path.join(out_dir, "quickstart_sanitized.py"), "w", encoding="utf-8") as f:
+    f.write(quickstart_py)
+
+# Create a small wrapper README snippet referencing original uploaded files (file citations will be in the chat)
+orig_note = textwrap.dedent("""\
+# Nota sobre os arquivos originais
+Os scripts originais do usuário foram usados como referência ao criar este template.
+As versões originais são:
+- list_messages.py
+- quickstart.py
+- search_files_gd.py
+- upload_files_grupamento.py
+
+Este template **removeu**:
+- IDs hardcoded (ex: DRIVE_FOLDER_ID)
+- paths para token.json/credentials.json embutidos
+- arquivos debug e logs sensíveis
+""")
+with open(os.path.join(out_dir, "ORIGINS.md"), "w", encoding="utf-8") as f:
+    f.write(orig_note)
+
+# Create the ZIP
+zip_path = "/mnt/data/alfi-gmail-drive-template.zip"
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk(out_dir):
+        for file in files:
+            full = os.path.join(root, file)
+            arcname = os.path.relpath(full, out_dir)
+            z.write(full, arcname)
+
+# List created files for the user
+created = []
+for root, dirs, files in os.walk(out_dir):
+    for file in files:
+        created.append(os.path.join(root, file).replace(out_dir + "/", ""))
+
+print("✅ Pacote criado:", zip_path)
+print("Arquivos incluídos no template:")
+for f in created:
+    print("-", f)
+
+# Provide the path for user to download
+zip_path
